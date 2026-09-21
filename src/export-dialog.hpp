@@ -16,27 +16,12 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
-#include <obs-frontend-api.h>
-#include <obs-module.h>
-#include <plugin-support.h>
+#pragma once
 
-#include "export-dialog.hpp"
+class QWidget;
 
-OBS_DECLARE_MODULE()
-OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
+// メニューから呼ぶ。出力先ダイアログ〜結果表示まで。
+void run_export(QWidget *parent);
 
-static void on_export_menu(void *)
-{
-	run_export(static_cast<QWidget *>(obs_frontend_get_main_window()));
-}
-
-bool obs_module_load(void)
-{
-	obs_frontend_add_tools_menu_item(obs_module_text("PortableExport.Menu"), on_export_menu, nullptr);
-	return true;
-}
-
-void obs_module_unload(void)
-{
-	export_shutdown();
-}
+// obs_module_unload から呼ぶ。書き出し中なら終わるまで待つ。
+void export_shutdown();
