@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.24)
 project(portable_core LANGUAGES CXX C)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
@@ -62,4 +62,12 @@ if(PORTABLE_CORE_TESTS)
   list(APPEND CMAKE_MODULE_PATH "${doctest_SOURCE_DIR}/scripts/cmake")
   include(doctest)
   doctest_discover_tests(portable_core_tests)
+
+  # doctest_discover_tests はテスト名を --test-case=<名前> として argv で渡す。
+  # MSVC のナロー main は GetCommandLineA() 経由で argv を作るため、
+  # ACP(GitHub の windows-2022 ランナーは CP1252)で表現できない日本語名は
+  # 1 文字ずつ '?' に落ち、どの TEST_CASE にも一致しなくなる。
+  # doctest は失敗 0 件なら exit 0 を返すので、1 件も実行されないまま緑になる。
+  # フィルタを一切渡さずに全件を 1 回走らせるエントリを別に登録して、その穴を塞ぐ。
+  add_test(NAME "portable_core_tests: 全件(フィルタ無し)" COMMAND portable_core_tests)
 endif()

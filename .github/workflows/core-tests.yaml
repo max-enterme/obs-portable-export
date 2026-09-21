@@ -14,10 +14,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -S core -B build-core -DPORTABLE_CORE_TESTS=ON
+        run: cmake -S core -B build-core -DCMAKE_BUILD_TYPE=Debug -DPORTABLE_CORE_TESTS=ON
 
       - name: Build
-        run: cmake --build build-core
+        run: cmake --build build-core --config Debug
 
+      # -V で doctest の集計行 ("test cases: N | N passed" と "assertions:") を必ずログに残す。
+      # これが無いと、フィルタが効かず 0 件実行で緑になっても気付けない。
       - name: Test
-        run: ctest --test-dir build-core --output-on-failure
+        run: ctest --test-dir build-core -C Debug --output-on-failure -V

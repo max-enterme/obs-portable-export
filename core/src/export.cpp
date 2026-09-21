@@ -74,6 +74,7 @@ ExportResult export_collection(const Json &collection, const ExportOptions &opt,
 			throw ExportError("JSON を書き込めません: " + utf8_from_path(result.json_path));
 		std::string dumped = plan.converted.dump(2) + "\n";
 		json_out.write(dumped.data(), static_cast<std::streamsize>(dumped.size()));
+		json_out.flush();
 		if (!json_out)
 			throw ExportError("JSON を書き込めません: " + utf8_from_path(result.json_path));
 	}

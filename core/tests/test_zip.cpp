@@ -69,8 +69,8 @@ TEST_CASE("zip: 読み戻して一致")
 {
 	TempDir tmp;
 	auto root = tmp.path() / "root";
-	write_file(root / "本配信.json", "{\"name\":\"本配信\"}");
-	write_file(root / "assets" / "背景.png", "background-bytes");
+	write_file(root / portable::path_from_utf8("本配信.json"), "{\"name\":\"本配信\"}");
+	write_file(root / "assets" / portable::path_from_utf8("背景.png"), "background-bytes");
 	write_file(root / "assets" / "a.mp4", "video-bytes");
 
 	auto zip_path = tmp.path() / "out.zip";
@@ -110,4 +110,13 @@ TEST_CASE("zip: 読み戻して一致")
 	}
 
 	mz_zip_reader_end(&zip);
+}
+
+TEST_CASE("zip: 走査できないフォルダは例外")
+{
+	TempDir tmp;
+	auto missing_dir = tmp.path() / "no-such-dir";
+	auto zip_path = tmp.path() / "out.zip";
+
+	CHECK_THROWS_AS(portable::write_zip(zip_path, missing_dir), portable::ExportError);
 }
