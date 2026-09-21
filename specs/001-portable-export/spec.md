@@ -3,7 +3,7 @@ feature: portable-export
 issue: 1
 release: r1
 priority: must
-status: 進行中
+status: レビュー
 ---
 
 # 素材ごとのポータブル書き出し(Windows)
