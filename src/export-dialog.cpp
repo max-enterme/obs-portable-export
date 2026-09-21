@@ -61,18 +61,38 @@ struct ExportJob {
 	std::thread thread;
 };
 
-// g_job はこのファイル内だけで使う。書き出しスレッドが生きている間だけ存在する。
+// 以下はどれも UI スレッドだけが読み書きする(ワーカースレッドは g_job を作る前に一度
+// 触るだけで、以後は QMetaObject::invokeMethod(parent, ..., Qt::QueuedConnection) 越しにしか
+// UI スレッドとやり取りしない)。
+// g_job: 書き出しスレッドが生きている間だけ存在する。
 std::unique_ptr<ExportJob> g_job;
+// g_export_running: OK を押した瞬間(obs_frontend_save() を呼ぶ前)から書き出し完了まで true。
+// g_job より広い区間をカバーする二重起動ガード(「OK を押してから継続ラムダが走るまで」の窓を塞ぐ)。
+bool g_export_running = false;
+// g_progress: 進捗ダイアログ。ワーカースレッドからは絶対に読み書きしない
+// (QPointer はスレッドセーフではないため)。ワーカー側は progress コールバックの中で
+// receiver に寿命の確実な parent(メインウィンドウ)を指定し、実際にダイアログを触るのは
+// GUI スレッドで実行されるラムダの中だけにする。
+QPointer<QProgressDialog> g_progress;
+// g_finished: 完了処理(finish_job)が走った後に届いた古い進捗更新を無視するためのフラグ。
+// shared_ptr の参照カウントはスレッドセーフだが、中身の bool を読み書きするのは GUI スレッドだけ。
+std::shared_ptr<bool> g_finished;
 
-void finish_job(QPointer<QProgressDialog> progress)
+// 書き出しの完了・失敗・強制終了(OBS 終了時)のどの経路からも呼べる。二重に呼んでも安全。
+void finish_job()
 {
+	if (g_finished)
+		*g_finished = true;
 	if (g_job) {
 		if (g_job->thread.joinable())
 			g_job->thread.join();
 		g_job.reset();
 	}
-	if (progress)
-		progress->close();
+	g_export_running = false;
+	if (g_progress)
+		g_progress->close();
+	g_progress = nullptr;
+	g_finished.reset();
 }
 
 void show_result(QWidget *parent, const portable::ExportResult &result, bool made_zip)
@@ -177,8 +197,14 @@ private:
 // さらに Qt::QueuedConnection で後ろに積む。これで 3 で読むファイルは保存後のものになる。
 void continue_export_after_save(QWidget *parent, QString parent_dir_str, bool make_zip)
 {
+	// 二重起動ガードの二段目(g_export_running だけでは「OK を押してから obs_frontend_save() の
+	// キューが空になるまで」の窓しか塞げないため、実際に g_job を作る直前にもう一度確認する)。
+	if (g_job)
+		return;
+
 	std::filesystem::path collection_path = current_collection_file();
 	if (collection_path.empty()) {
+		g_export_running = false;
 		QMessageBox::critical(parent, qtext("PortableExport.Failed"),
 				       qtext("PortableExport.Failed") + "\n" + qtext("PortableExport.NoCollection"));
 		return;
@@ -188,6 +214,7 @@ void continue_export_after_save(QWidget *parent, QString parent_dir_str, bool ma
 	{
 		std::ifstream ifs(collection_path, std::ios::binary);
 		if (!ifs) {
+			g_export_running = false;
 			QMessageBox::critical(parent, qtext("PortableExport.Failed"),
 					       qtext("PortableExport.Failed") + "\n" +
 						       qtext("PortableExport.ReadFailed")
@@ -198,6 +225,7 @@ void continue_export_after_save(QWidget *parent, QString parent_dir_str, bool ma
 		try {
 			collection = portable::Json::parse(ifs);
 		} catch (const std::exception &) {
+			g_export_running = false;
 			QMessageBox::critical(parent, qtext("PortableExport.Failed"),
 					       qtext("PortableExport.Failed") + "\n" +
 						       qtext("PortableExport.ReadFailed")
@@ -212,34 +240,51 @@ void continue_export_after_save(QWidget *parent, QString parent_dir_str, bool ma
 	progress->setWindowModality(Qt::WindowModal);
 	progress->setCancelButton(nullptr);
 	progress->setMinimumDuration(0);
+	// 最後の素材をコピーした瞬間に autoReset/autoClose で消えてしまわないようにする。
+	// JSON 書き出しと zip 作成がまだ残っているため、閉じるのは finish_job() に任せる。
+	progress->setAutoReset(false);
+	progress->setAutoClose(false);
+	// close() を「隠すだけ」で終わらせず、確実に破棄する。QPointer(g_progress)の
+	// null 化はこの削除に連動するので、g_progress の管理と二重にならないよう
+	// 手動 deleteLater() は呼ばない。
+	progress->setAttribute(Qt::WA_DeleteOnClose);
 	progress->show();
 
-	QPointer<QProgressDialog> progress_ptr(progress);
+	// これ以降、進捗ダイアログと完了フラグは g_progress / g_finished(=UI スレッド専有)経由でだけ触る。
+	g_progress = progress;
+	g_finished = std::make_shared<bool>(false);
+	std::shared_ptr<bool> finished = g_finished; // ワーカースレッドへ渡す分。shared_ptr のコピー自体はスレッドセーフ。
 
 	portable::ExportOptions options;
 	options.parent_dir = portable::path_from_utf8(parent_dir_str.toUtf8().constData());
 	options.make_zip = make_zip;
 
 	g_job = std::make_unique<ExportJob>();
-	g_job->thread = std::thread([collection, options, progress_ptr, parent, make_zip]() mutable {
+	g_job->thread = std::thread([collection, options, parent, finished, make_zip]() mutable {
 		try {
 			portable::ExportResult result = portable::export_collection(
-				collection, options, [progress_ptr](size_t done, size_t total) {
+				collection, options, [parent, finished](size_t done, size_t total) {
+					// ワーカースレッドからは QPointer(g_progress)を一切読み書きしない。
+					// receiver には寿命の確実な parent(メインウィンドウ)を渡す
+					// (OBS_FRONTEND_EVENT_EXIT で書き出し完了を待ってから
+					// メインウィンドウが破棄されるようにしてあるため常に生存している)。
+					// 進捗ダイアログの生死は GUI スレッドで実行されるこの内側の
+					// ラムダの中で g_progress を見てだけ判断する。
 					QMetaObject::invokeMethod(
-						progress_ptr.data(),
-						[progress_ptr, done, total]() {
-							if (!progress_ptr)
+						parent,
+						[finished, done, total]() {
+							if (*finished || !g_progress)
 								return;
-							progress_ptr->setRange(0, static_cast<int>(total));
-							progress_ptr->setValue(static_cast<int>(done));
+							g_progress->setRange(0, static_cast<int>(total));
+							g_progress->setValue(static_cast<int>(done));
 						},
 						Qt::QueuedConnection);
 				});
 
 			QMetaObject::invokeMethod(
 				parent,
-				[parent, progress_ptr, result, make_zip]() {
-					finish_job(progress_ptr);
+				[parent, result, make_zip]() {
+					finish_job();
 					show_result(parent, result, make_zip);
 				},
 				Qt::QueuedConnection);
@@ -247,8 +292,8 @@ void continue_export_after_save(QWidget *parent, QString parent_dir_str, bool ma
 			std::string message = e.what();
 			QMetaObject::invokeMethod(
 				parent,
-				[parent, progress_ptr, message]() {
-					finish_job(progress_ptr);
+				[parent, message]() {
+					finish_job();
 					QMessageBox::critical(parent, qtext("PortableExport.Failed"),
 							       qtext("PortableExport.Failed") + "\n" +
 								       QString::fromUtf8(message.c_str()));
@@ -262,7 +307,9 @@ void continue_export_after_save(QWidget *parent, QString parent_dir_str, bool ma
 
 void run_export(QWidget *parent)
 {
-	if (g_job) {
+	// 「OK を押してから継続ラムダ(continue_export_after_save)が走るまで」の窓は
+	// g_job ではなく g_export_running で塞ぐ(g_job はまだ作られていないため)。
+	if (g_export_running) {
 		QMessageBox::information(parent, qtext("PortableExport.Title"), qtext("PortableExport.Busy"));
 		return;
 	}
@@ -281,6 +328,10 @@ void run_export(QWidget *parent)
 		config_save(user_config);
 	}
 
+	// obs_frontend_save() を呼ぶ前に印を立てる。ここから継続ラムダが走って g_job が
+	// 作られるまでの間に二重に OK を押されても、この印だけで弾ける。
+	g_export_running = true;
+
 	obs_frontend_save();
 
 	QMetaObject::invokeMethod(
@@ -291,11 +342,9 @@ void run_export(QWidget *parent)
 
 void export_shutdown()
 {
-	if (g_job) {
-		if (g_job->thread.joinable())
-			g_job->thread.join();
-		g_job.reset();
-	}
+	// obs_module_unload からも、OBS_FRONTEND_EVENT_EXIT のハンドラ(plugin-main.cpp)からも
+	// 呼ばれる。g_job が無ければ何もしない(冪等)。
+	finish_job();
 }
 
 #include "export-dialog.moc"
