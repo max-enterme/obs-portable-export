@@ -26,10 +26,12 @@ set_target_properties(miniz PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 add_library(portable_core STATIC
   src/convert.cpp
+  src/export.cpp
+  src/zip.cpp
 )
 target_include_directories(portable_core PUBLIC include)
 target_compile_features(portable_core PUBLIC cxx_std_17)
-target_link_libraries(portable_core PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(portable_core PUBLIC nlohmann_json::nlohmann_json miniz)
 
 if(MSVC)
   target_compile_options(portable_core PUBLIC /utf-8)
@@ -48,6 +50,8 @@ if(PORTABLE_CORE_TESTS)
   add_executable(portable_core_tests
     tests/test_main.cpp
     tests/test_convert.cpp
+    tests/test_export.cpp
+    tests/test_zip.cpp
   )
   target_link_libraries(portable_core_tests PRIVATE portable_core doctest::doctest)
 
