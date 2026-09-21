@@ -1,0 +1,23 @@
+name: Core Tests
+on:
+  push:
+  pull_request:
+jobs:
+  core-tests:
+    name: Build and Test core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S core -B build-core -DPORTABLE_CORE_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-core
+
+      - name: Test
+        run: ctest --test-dir build-core --output-on-failure
