@@ -67,9 +67,21 @@ void write_zip(const std::filesystem::path &zip_path, const std::filesystem::pat
 	for (; it != std::filesystem::recursive_directory_iterator(); it.increment(walk_ec)) {
 		if (walk_ec)
 			throw ExportError("zip: フォルダを読めません: " + utf8_from_path(root_dir));
-		if (it->is_regular_file())
+		// 送出版の is_regular_file() は stat できない項目で filesystem_error を投げる。
+		// 判定できないものを黙って飛ばすと中身の欠けた zip ができるので、例外ではなく
+		// error_code で受けて ExportError に揃える。
+		std::error_code file_ec;
+		const bool is_file = it->is_regular_file(file_ec);
+		if (file_ec)
+			throw ExportError("zip: 項目を読めません: " + utf8_from_path(it->path()));
+		if (is_file)
 			files.push_back(it->path());
 	}
+	// increment() が失敗すると iterator は end になるので、上のループ条件が先に偽になり
+	// 本体の検査には届かない。脱出直後にもう一度見ないと、走査が途中で切れたことに
+	// 気付かないまま「中身の欠けた zip」を成功として返してしまう。
+	if (walk_ec)
+		throw ExportError("zip: フォルダを読めません: " + utf8_from_path(root_dir));
 
 	WriteState write_state;
 	write_state.out.open(zip_path, std::ios::binary | std::ios::trunc);

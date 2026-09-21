@@ -283,7 +283,12 @@ void continue_export_after_save(QWidget *parent, QString parent_dir_str, bool ma
 
 			QMetaObject::invokeMethod(
 				parent,
-				[parent, result, make_zip]() {
+				[parent, result, make_zip, finished]() {
+					// OBS 終了時(OBS_FRONTEND_EVENT_EXIT)に export_shutdown() が
+					// 先に join を終えている場合、このラムダは投函済みのまま残る。
+					// そのまま結果ダイアログを開くと、終了処理が OK を押すまで止まる。
+					if (*finished)
+						return;
 					finish_job();
 					show_result(parent, result, make_zip);
 				},
@@ -292,7 +297,9 @@ void continue_export_after_save(QWidget *parent, QString parent_dir_str, bool ma
 			std::string message = e.what();
 			QMetaObject::invokeMethod(
 				parent,
-				[parent, message]() {
+				[parent, message, finished]() {
+					if (*finished)
+						return;
 					finish_job();
 					QMessageBox::critical(parent, qtext("PortableExport.Failed"),
 							       qtext("PortableExport.Failed") + "\n" +
