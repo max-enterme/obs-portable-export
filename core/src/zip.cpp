@@ -27,6 +27,7 @@ size_t zip_write_callback(void *opaque, mz_uint64 file_ofs, const void *buf, siz
 
 struct ReadState {
 	std::ifstream in;
+	mz_uint64 total_read = 0;
 };
 
 size_t zip_read_callback(void *opaque, mz_uint64 file_ofs, void *buf, size_t n)
@@ -34,7 +35,11 @@ size_t zip_read_callback(void *opaque, mz_uint64 file_ofs, void *buf, size_t n)
 	auto *state = static_cast<ReadState *>(opaque);
 	state->in.seekg(static_cast<std::streamoff>(file_ofs));
 	state->in.read(static_cast<char *>(buf), static_cast<std::streamsize>(n));
-	return static_cast<size_t>(state->in.gcount());
+	size_t got = static_cast<size_t>(state->in.gcount());
+	if (state->in.bad())
+		return 0;
+	state->total_read += got;
+	return got;
 }
 
 // root からの相対パスを '/' 区切りの UTF-8 で返す。
@@ -55,9 +60,11 @@ void write_zip(const std::filesystem::path &zip_path, const std::filesystem::pat
 {
 	std::vector<std::filesystem::path> files;
 	std::error_code walk_ec;
-	for (auto it = std::filesystem::recursive_directory_iterator(
-		     root_dir, std::filesystem::directory_options::skip_permission_denied, walk_ec);
-	     it != std::filesystem::recursive_directory_iterator(); it.increment(walk_ec)) {
+	auto it = std::filesystem::recursive_directory_iterator(
+		root_dir, std::filesystem::directory_options::skip_permission_denied, walk_ec);
+	if (walk_ec)
+		throw ExportError("zip: フォルダを読めません: " + utf8_from_path(root_dir));
+	for (; it != std::filesystem::recursive_directory_iterator(); it.increment(walk_ec)) {
 		if (walk_ec)
 			throw ExportError("zip: フォルダを読めません: " + utf8_from_path(root_dir));
 		if (it->is_regular_file())
@@ -98,6 +105,10 @@ void write_zip(const std::filesystem::path &zip_path, const std::filesystem::pat
 			mz_zip_writer_end(&zip);
 			throw ExportError("zip: 追加に失敗しました: " + utf8_from_path(file));
 		}
+		if (read_state.in.bad() || read_state.total_read != size) {
+			mz_zip_writer_end(&zip);
+			throw ExportError("zip: 読み込みが途中で終わりました: " + utf8_from_path(file));
+		}
 	}
 
 	if (!mz_zip_writer_finalize_archive(&zip)) {
@@ -106,6 +117,7 @@ void write_zip(const std::filesystem::path &zip_path, const std::filesystem::pat
 	}
 	mz_zip_writer_end(&zip);
 
+	write_state.out.flush();
 	if (!write_state.out)
 		throw ExportError("zip: 書き込めません: " + utf8_from_path(zip_path));
 }

@@ -131,11 +131,11 @@ TEST_CASE("plan: 入れ子の設定オブジェクト")
 		"groups": [{"name": "G", "settings": {"file": "C:/m/g.png"}}],
 		"sources": [
 			{"name": "画像", "settings": {}, "filters": [{"name": "切り抜き", "settings": {"image_path": "C:/m/k.png"}}]},
-			{"name": "シーン", "settings": {"items": [{"name": "画像", "show_transition": {"name": "登場", "transition": {"path": "C:/m/s.webm"}}}]}}
+			{"name": "シーン", "settings": {"items": [{"name": "画像", "show_transition": {"name": "登場", "transition": {"path": "C:/m/s.webm"}}, "hide_transition": {"name": "退場", "transition": {"path": "C:/m/h.webm"}}}]}}
 		]
 	})JSON");
 
-	auto stat = make_stat({"C:/m/t.mov", "C:/m/g.png", "C:/m/k.png", "C:/m/s.webm"});
+	auto stat = make_stat({"C:/m/t.mov", "C:/m/g.png", "C:/m/k.png", "C:/m/s.webm", "C:/m/h.webm"});
 	ConversionPlan plan = portable::plan_conversion(collection, stat);
 
 	CHECK(plan.converted["transitions"][0]["settings"]["path"] == "./assets/フェード.mov");
@@ -143,6 +143,8 @@ TEST_CASE("plan: 入れ子の設定オブジェクト")
 	CHECK(plan.converted["sources"][0]["filters"][0]["settings"]["image_path"] == "./assets/切り抜き.png");
 	CHECK(plan.converted["sources"][1]["settings"]["items"][0]["show_transition"]["transition"]["path"] ==
 	      "./assets/登場.webm");
+	CHECK(plan.converted["sources"][1]["settings"]["items"][0]["hide_transition"]["transition"]["path"] ==
+	      "./assets/退場.webm");
 }
 
 TEST_CASE("plan: 設定オブジェクトの外は触らない")

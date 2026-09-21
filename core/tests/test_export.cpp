@@ -64,14 +64,16 @@ TEST_CASE("export: 出力の形とバイト一致")
 	TempDir tmp;
 	auto src_dir = tmp.path() / "src";
 	write_file(src_dir / "one.png", "png-bytes");
-	write_file(src_dir / "two.mp4", "mp4-bytes");
+	write_file(src_dir / portable::path_from_utf8("素材.mp4"), "mp4-bytes");
 	write_file(src_dir / "three.txt", "txt-bytes");
 
 	Json collection;
 	collection["name"] = "本配信";
 	collection["sources"] = Json::array();
 	collection["sources"].push_back({{"name", "Img1"}, {"settings", {{"file", portable::utf8_from_path(src_dir / "one.png")}}}});
-	collection["sources"].push_back({{"name", "Vid1"}, {"settings", {{"local_file", portable::utf8_from_path(src_dir / "two.mp4")}}}});
+	collection["sources"].push_back(
+		{{"name", "動画1"},
+		 {"settings", {{"local_file", portable::utf8_from_path(src_dir / portable::path_from_utf8("素材.mp4"))}}}});
 	collection["sources"].push_back({{"name", "Txt1"}, {"settings", {{"text_file", portable::utf8_from_path(src_dir / "three.txt")}}}});
 
 	ExportOptions opt;
@@ -80,19 +82,19 @@ TEST_CASE("export: 出力の形とバイト一致")
 
 	ExportResult result = portable::export_collection(collection, opt);
 
-	CHECK(result.out_dir == opt.parent_dir / "本配信");
-	CHECK(result.json_path == result.out_dir / "本配信.json");
+	CHECK(result.out_dir == opt.parent_dir / portable::path_from_utf8("本配信"));
+	CHECK(result.json_path == result.out_dir / portable::path_from_utf8("本配信.json"));
 	CHECK(result.copied == 3);
 	CHECK(result.missing.empty());
 
 	CHECK(read_file(result.out_dir / "assets" / "Img1.png") == "png-bytes");
-	CHECK(read_file(result.out_dir / "assets" / "Vid1.mp4") == "mp4-bytes");
+	CHECK(read_file(result.out_dir / "assets" / portable::path_from_utf8("動画1.mp4")) == "mp4-bytes");
 	CHECK(read_file(result.out_dir / "assets" / "Txt1.txt") == "txt-bytes");
 
 	std::ifstream jf(result.json_path, std::ios::binary);
 	Json reread = Json::parse(jf);
 	CHECK(reread["sources"][0]["settings"]["file"].get<std::string>() == "./assets/Img1.png");
-	CHECK(reread["sources"][1]["settings"]["local_file"].get<std::string>() == "./assets/Vid1.mp4");
+	CHECK(reread["sources"][1]["settings"]["local_file"].get<std::string>() == "./assets/動画1.mp4");
 	CHECK(reread["sources"][2]["settings"]["text_file"].get<std::string>() == "./assets/Txt1.txt");
 }
 
@@ -102,7 +104,7 @@ TEST_CASE("export: フォルダ名の重複を避ける")
 
 	{
 		auto parent = tmp.path() / "out1";
-		std::filesystem::create_directories(parent / "本配信");
+		std::filesystem::create_directories(parent / portable::path_from_utf8("本配信"));
 
 		Json collection;
 		collection["name"] = "本配信";
@@ -110,13 +112,13 @@ TEST_CASE("export: フォルダ名の重複を避ける")
 		ExportOptions opt;
 		opt.parent_dir = parent;
 		ExportResult result = portable::export_collection(collection, opt);
-		CHECK(result.out_dir == parent / "本配信_2");
+		CHECK(result.out_dir == parent / portable::path_from_utf8("本配信_2"));
 	}
 
 	{
 		auto parent = tmp.path() / "out2";
-		std::filesystem::create_directories(parent / "本配信");
-		write_file(parent / "本配信_2.zip", "zip-placeholder");
+		std::filesystem::create_directories(parent / portable::path_from_utf8("本配信"));
+		write_file(parent / portable::path_from_utf8("本配信_2.zip"), "zip-placeholder");
 
 		Json collection;
 		collection["name"] = "本配信";
@@ -124,7 +126,7 @@ TEST_CASE("export: フォルダ名の重複を避ける")
 		ExportOptions opt;
 		opt.parent_dir = parent;
 		ExportResult result = portable::export_collection(collection, opt);
-		CHECK(result.out_dir == parent / "本配信_3");
+		CHECK(result.out_dir == parent / portable::path_from_utf8("本配信_3"));
 	}
 }
 
