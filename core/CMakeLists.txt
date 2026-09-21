@@ -59,15 +59,21 @@ if(PORTABLE_CORE_TESTS)
     target_compile_options(portable_core_tests PRIVATE /utf-8)
   endif()
 
-  list(APPEND CMAKE_MODULE_PATH "${doctest_SOURCE_DIR}/scripts/cmake")
-  include(doctest)
-  doctest_discover_tests(portable_core_tests)
-
-  # doctest_discover_tests はテスト名を --test-case=<名前> として argv で渡す。
-  # MSVC のナロー main は GetCommandLineA() 経由で argv を作るため、
-  # ACP(GitHub の windows-2022 ランナーは CP1252)で表現できない日本語名は
-  # 1 文字ずつ '?' に落ち、どの TEST_CASE にも一致しなくなる。
-  # doctest は失敗 0 件なら exit 0 を返すので、1 件も実行されないまま緑になる。
-  # フィルタを一切渡さずに全件を 1 回走らせるエントリを別に登録して、その穴を塞ぐ。
-  add_test(NAME "portable_core_tests: 全件(フィルタ無し)" COMMAND portable_core_tests)
+  # ctest には「フィルタ無しで実行ファイルを 1 回走らせる」エントリだけを登録する。
+  #
+  # doctest 付属の doctest_discover_tests() は TEST_CASE ごとに ctest エントリを作り、
+  # テスト名を --test-case=<名前> として argv で渡す。ところが MSVC のナロー main は
+  # GetCommandLineA() 経由で argv を作るため、ACP(GitHub の windows-2022 ランナーは CP1252)で
+  # 表現できない日本語のテスト名は 1 文字ずつ '?' に落ちる。doctest の wildcmp は '?' を
+  # 1 バイトのワイルドカードとして扱うので UTF-8(1 文字 3 バイト)と一致せず、ヒット 0 件になる。
+  # doctest は失敗 0 件なら exit 0 を返すので、ctest からは「全部 Passed」に見える。
+  #
+  # これは机上の懸念ではなく実測で確認した: 2026-09-22 の CI で windows-2022 の
+  # 個別エントリ 28 件がすべて "[doctest] test cases: 0 | 0 passed | 0 failed | 28 skipped" を
+  # 出しながら Passed になっていた。plan.md がテスト名を日本語で定めている以上、
+  # 個別エントリは Windows で必ず空振りするので登録しない。
+  #
+  # CI 側は ctest -V で実行しているので、doctest の集計行("test cases:" / "assertions:")が
+  # 毎回ログに残る。空振りが再発したらそこで分かる。
+  add_test(NAME portable_core_tests COMMAND portable_core_tests)
 endif()
