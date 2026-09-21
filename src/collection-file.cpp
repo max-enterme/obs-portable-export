@@ -81,6 +81,11 @@ std::string ensure_json_ext(std::string filename)
 	return filename;
 }
 
+// directory_iterator の operator++() / directory_entry::is_regular_file() は例外を投げる
+// オーバーロードなので、ここでは非送出版(std::error_code を取るオーバーロード)だけを使う。
+// この関数は Qt のイベント配送(QMetaObject::invokeMethod の中)から呼ばれるため、
+// Qt6 は例外の伝播をサポートしておらず(qTerminate())、ACL 拒否や壊れたジャンクションなど
+// stat できない項目が 1 つあるだけで OBS が落ちてしまう。
 std::filesystem::path find_by_current_collection_name(const std::filesystem::path &dir)
 {
 	char *current_name_raw = obs_frontend_get_current_scene_collection();
@@ -94,13 +99,21 @@ std::filesystem::path find_by_current_collection_name(const std::filesystem::pat
 	if (!std::filesystem::is_directory(dir, ec))
 		return {};
 
-	for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
+	std::filesystem::directory_iterator it(dir, ec);
+	const std::filesystem::directory_iterator end;
+	if (ec)
+		return {};
+
+	for (; it != end; it.increment(ec)) {
 		if (ec)
 			break;
-		if (!entry.is_regular_file())
+
+		std::error_code file_ec;
+		bool is_file = it->is_regular_file(file_ec);
+		if (file_ec || !is_file)
 			continue;
 
-		std::filesystem::path p = entry.path();
+		std::filesystem::path p = it->path();
 		if (to_lower_ascii(portable::utf8_from_path(p.extension())) != ".json")
 			continue;
 
@@ -124,17 +137,25 @@ std::filesystem::path find_by_current_collection_name(const std::filesystem::pat
 
 std::filesystem::path current_collection_file()
 {
-	std::filesystem::path dir = scenes_dir();
+	// この関数は Qt::QueuedConnection のラムダ本体(Qt のイベント配送の中)から呼ばれる。
+	// Qt6 は例外の伝播をサポートしていないため、内部で想定外の例外が漏れると
+	// qTerminate() で OBS ごと落ちる。空 path を返すだけの経路にする。
+	try {
+		std::filesystem::path dir = scenes_dir();
 
-	config_t *user_config = obs_frontend_get_user_config();
-	const char *filename_raw = user_config ? config_get_string(user_config, "Basic", "SceneCollectionFile") : nullptr;
+		config_t *user_config = obs_frontend_get_user_config();
+		const char *filename_raw =
+			user_config ? config_get_string(user_config, "Basic", "SceneCollectionFile") : nullptr;
 
-	if (filename_raw && *filename_raw) {
-		std::filesystem::path candidate = dir / portable::path_from_utf8(ensure_json_ext(filename_raw));
-		std::error_code ec;
-		if (std::filesystem::is_regular_file(candidate, ec))
-			return candidate;
+		if (filename_raw && *filename_raw) {
+			std::filesystem::path candidate = dir / portable::path_from_utf8(ensure_json_ext(filename_raw));
+			std::error_code ec;
+			if (std::filesystem::is_regular_file(candidate, ec))
+				return candidate;
+		}
+
+		return find_by_current_collection_name(dir);
+	} catch (...) {
+		return {};
 	}
-
-	return find_by_current_collection_name(dir);
 }
